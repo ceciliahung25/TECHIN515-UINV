@@ -1,20 +1,16 @@
-import os
+import replicate
 import streamlit as st
-import google.generativeai as genai
-from dotenv import load_dotenv
-import io
 from PIL import Image
-import google.ai.generativelanguage as glm
+import io
+import base64
 import re
 import time
+from hydralit import HydraApp, HydraHeadApp
+from dotenv import load_dotenv
 
+# Load environment variables
 load_dotenv()
 
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-model = genai.GenerativeModel('gemini-pro-vision')
-extracted_results = []
-
-# Dictionary for mapping animals to emojis
 animal_emojis = {
     "dog": "🐕",
     "bird": "🐦",
@@ -37,91 +33,130 @@ animal_emojis = {
     # Add more as needed
 }
 
-def prepare_image(uploaded_file):
-    image = Image.open(uploaded_file)
-    img_byte_arr = io.BytesIO()
-    image.save(img_byte_arr, format='PNG')
-    img_byte_arr = img_byte_arr.getvalue()
-    return img_byte_arr
 
 def process_analysis_text(text):
-    # Regex pattern to extract items and their similarities
     pattern = re.compile(r"(\w+): (\d+)%")
     matches = pattern.findall(text)
     extracted_results = [(match[0], int(match[1])) for match in matches]
     return extracted_results
 
+
 def upload_image():
-    uploaded_file = st.file_uploader("Upload Your Cloud Photo", type=["jpg", "jpeg", "png"], key="image_uploader")
+    uploaded_file = st.file_uploader("Upload Your Cloud Photo", type=["jpg", "jpeg", "png"])
     if uploaded_file is not None:
         image = Image.open(uploaded_file)
-        st.image(image, caption='Uploaded Cloud Photo', width=200)
+        st.image(image, caption="Uploaded Cloud Photo", width=200)
     return uploaded_file
 
-def main():
-    st.set_page_config(page_title="Cloud Riddle Game", layout="centered", initial_sidebar_state="collapsed")
 
-    if 'page' not in st.session_state:
-        st.session_state['page'] = "Landing Page"
-        st.toast("A new cloud is available ☁️")
-        time.sleep(4)  # Keeping the toast for 4 seconds
+def local_image_to_data_url(file_obj):
+    img_byte_arr = io.BytesIO(file_obj.read())
+    encoded_string = base64.b64encode(img_byte_arr.getvalue()).decode("utf-8")
+    mime_type = Image.open(img_byte_arr).format.lower()
+    return f"data:image/{mime_type};base64,{encoded_string}"
 
-    if st.session_state['page'] == "Landing Page":
-        if st.button("👀 Check my new cloud ☁️"):
-            st.session_state['page'] = "Image Upload"
-            st.experimental_rerun()
 
-    elif st.session_state['page'] == "Image Upload":
-        uploaded_image = upload_image()
-        if uploaded_image is not None:
-            if st.button("Confirm and Reveal the Riddle"):
-                st.session_state['uploaded_image'] = uploaded_image
-                st.session_state['page'] = "Riddle Reveal"
+def submit_analysis(uploaded_image):
+    try:
+        image_url = local_image_to_data_url(uploaded_image)
+        input_data = {
+            "image": image_url,
+            "prompt": "What are the top 5 animals this cloud looks like, with confidence scores?",
+        }
+        output = replicate.run(
+            "yorickvp/llava-13b:b5f6212d032508382d61ff00469ddda3e32fd8a0e75dc39d8a4191bb742157fb",
+            input=input_data,
+        )
+        st.write("Debug: ", output)
+        analysis_text = output.get("text", "")
+        extracted_results = process_analysis_text(analysis_text)
+        if not extracted_results:
+            extracted_results = [("Unknown", 0)] * 5
+        st.session_state["extracted_results"] = extracted_results
+        st.session_state["analysis_complete"] = True
+        st.experimental_rerun()
+    except Exception as e:
+        st.error(f"An error occurred: {e}")
+        st.write("Unable to generate the riddle. Please check your Replicate credentials.")
+        
+
+class CloudRiddleApp(HydraHeadApp):
+    def run(self):
+        # Load custom CSS for mobile navbar positioning
+        with open("style.css") as f:
+            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
+        if "page" not in st.session_state:
+            st.session_state["page"] = "Landing Page"
+            st.toast("A new cloud is available ☁️")
+            time.sleep(4)
+
+        if st.session_state["page"] == "Landing Page":
+            if st.button("👀 Check my new cloud ☁️"):
+                st.session_state["page"] = "Image Upload"
                 st.experimental_rerun()
 
-    elif st.session_state['page'] == "Riddle Reveal":
-        if 'uploaded_image' not in st.session_state or st.session_state['uploaded_image'] is None:
-            st.warning("Please upload an image first on the 'Image Upload' page.")
-            st.session_state['page'] = "Image Upload"
-            st.experimental_rerun()
-        else:
-            uploaded_image = st.session_state['uploaded_image']
-            st.image(uploaded_image, caption='Uploaded Cloud Photo', width=200)
+        elif st.session_state["page"] == "Image Upload":
+            uploaded_image = upload_image()
+            if uploaded_image is not None:
+                if st.button("Confirm and Reveal the Riddle"):
+                    st.session_state["uploaded_image"] = uploaded_image
+                    st.session_state["page"] = "Riddle Reveal"
+                    st.experimental_rerun()
 
-            user_response = st.text_input("What objects do you think the cloud looks like?")
-            if st.button("Submit and Reveal the Riddle"):
-                with st.spinner("Analyzing..."):
-                    try:
-                        img_byte_arr = prepare_image(uploaded_image)
-                        content = glm.Content(parts=[
-                            glm.Part(text="What top 5 objects does this cloud resemble? and say the corresponding degree of similarity, for example, dog: 60%, bird: 30%."),
-                            glm.Part(inline_data=glm.Blob(mime_type="image/png", data=img_byte_arr)),
-                        ])
-                        response = model.generate_content(content)
-                        analysis_text = response.text
-                        #st.write("Raw response:", analysis_text)  # Optionally keep this line for debugging
+        elif st.session_state["page"] == "Riddle Reveal":
+            if "uploaded_image" not in st.session_state or st.session_state["uploaded_image"] is None:
+                st.warning("Please upload an image first on the 'Image Upload' page.")
+                st.session_state["page"] = "Image Upload"
+                st.experimental_rerun()
+            else:
+                uploaded_image = st.session_state["uploaded_image"]
+                st.image(uploaded_image, caption="Uploaded Cloud Photo", width=200)
 
-                        extracted_results = process_analysis_text(analysis_text)
-                        st.session_state['extracted_results'] = extracted_results
-                    except Exception as e:
-                        st.error(f"An error occurred: {e}")
+                if "user_response" not in st.session_state:
+                    st.session_state["user_response"] = ""
+                st.session_state["user_response"] = st.text_input(
+                    "What objects do you think the cloud looks like?",
+                    value=st.session_state["user_response"]
+                )
+                if st.button("Submit and Reveal the Riddle"):
+                    submit_analysis(uploaded_image)
 
-            # Display the results, avoiding repetition
-            if 'extracted_results' in st.session_state:
-                extracted_results = st.session_state['extracted_results']
-                if extracted_results:
+                if "analysis_complete" in st.session_state and st.session_state["analysis_complete"]:
+                    extracted_results = st.session_state["extracted_results"]
                     st.subheader("Top 5 Similarities:")
                     for index, (item, similarity) in enumerate(extracted_results, start=1):
                         emoji = animal_emojis.get(item.lower(), "")
                         st.write(f"{index}. {emoji} {item}: {similarity}%")
 
-                    # Add "Check Next Cloud" button
                     if st.button("Check Next Cloud ☁️"):
-                        # Reset state and go to the image upload page
-                        st.session_state['page'] = "Image Upload"
-                        st.session_state.pop('uploaded_image', None)
-                        st.session_state.pop('extracted_results', None)
+                        st.session_state["page"] = "Image Upload"
+                        st.session_state.pop("uploaded_image", None)
+                        st.session_state.pop("extracted_results", None)
+                        st.session_state.pop("user_response", None)
+                        st.session_state.pop("analysis_complete", None)
                         st.experimental_rerun()
 
+
+class TimeLapseApp(HydraHeadApp):
+    def run(self):
+        # Load custom CSS for mobile navbar positioning
+        with open("style.css") as f:
+            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
+        st.title("Time-Lapse Page")
+        st.write("This page will be implemented in the future.")
+
+
 if __name__ == "__main__":
-    main()
+    app = HydraApp(
+        title="Cloud Riddle and Time-Lapse",
+        favicon="🌤️",
+        use_navbar=True,
+        navbar_sticky=False,
+    )
+
+    app.add_app("Cloud Riddle", icon="☁️", app=CloudRiddleApp())
+    app.add_app("Time-Lapse", icon="⏳", app=TimeLapseApp())
+
+    app.run()
