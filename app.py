@@ -34,10 +34,13 @@ animal_emojis = {
 }
 
 
-def process_analysis_text(text):
-    pattern = re.compile(r"(\w+): (\d+)%")
-    matches = pattern.findall(text)
-    extracted_results = [(match[0], int(match[1])) for match in matches]
+def process_analysis_text(text_gen):
+    # text gen is a generator containing a string that I want to lookup and concatenate with an emoji from the animal_emojis dict
+    extracted_results = []
+    for line in text_gen:
+        if line.split()[1].lower() in animal_emojis.keys():
+            extracted_results.append(animal_emojis[line.split()[1].lower()] + " " + line)
+        print(line.split()[1].lower())
     return extracted_results
 
 
@@ -68,8 +71,11 @@ def submit_analysis(uploaded_image):
             input=input_data,
         )
         st.write("Result: ", output)
-        analysis_text = output.get("text", "")
-        extracted_results = process_analysis_text(analysis_text)
+
+        # analysis_text = output.get("text", "")
+        extracted_results = process_analysis_text(output)
+        print(extracted_results)
+        st.write("Extracted Results: ", extracted_results)
         if not extracted_results:
             extracted_results = [("Unknown", 0)] * 5
         st.session_state["extracted_results"] = extracted_results
