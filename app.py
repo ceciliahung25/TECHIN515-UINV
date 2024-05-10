@@ -61,13 +61,13 @@ def submit_analysis(uploaded_image):
         image_url = local_image_to_data_url(uploaded_image)
         input_data = {
             "image": image_url,
-            "prompt": "What are the top 5 animals this cloud looks like, with confidence scores?",
+            "prompt": "What are the top 5 animals this cloud looks like, with confidence scores (in the form of percentage)?",
         }
         output = replicate.run(
             "yorickvp/llava-13b:b5f6212d032508382d61ff00469ddda3e32fd8a0e75dc39d8a4191bb742157fb",
             input=input_data,
         )
-        st.write("Debug: ", output)
+        st.write("Result: ", output)
         analysis_text = output.get("text", "")
         extracted_results = process_analysis_text(analysis_text)
         if not extracted_results:
